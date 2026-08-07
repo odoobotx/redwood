@@ -310,7 +310,7 @@ func (h proxyHandler) ServeHTTPAuthenticated(w http.ResponseWriter, r *http.Requ
 
 	// Cap any single proxied request so a hung upstream cannot hold the
 	// connection (and the browser's connection pool) open forever.
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
 	defer cancel()
 	r = r.WithContext(ctx)
 
