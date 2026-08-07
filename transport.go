@@ -166,11 +166,19 @@ func (ct *connTransport) roundTrip(req *http.Request) (resp *http.Response, err 
 		ct.br = bufio.NewReader(ct.Conn)
 	}
 
+	// Respect context deadline so a cancelled request unblocks the read.
+	if deadline, ok := ctx.Deadline(); ok {
+		ct.Conn.SetReadDeadline(deadline)
+	} else {
+		ct.Conn.SetReadDeadline(time.Time{})
+	}
+
 	resp, err = ReadResponse(ct.br, req)
 	if err == nil {
 		resp.Body = &bodyWithContext{
 			ReadCloser: resp.Body,
 			Ctx:        ctx,
+			Conn:       ct.Conn,
 		}
 	}
 	return resp, err
@@ -194,7 +202,8 @@ func (ct *connTransport) redial(ctx context.Context) error {
 // the associated context is canceled.
 type bodyWithContext struct {
 	io.ReadCloser
-	Ctx context.Context
+	Ctx  context.Context
+	Conn net.Conn
 }
 
 func (b *bodyWithContext) Read(p []byte) (n int, err error) {
@@ -202,6 +211,11 @@ func (b *bodyWithContext) Read(p []byte) (n int, err error) {
 	case <-b.Ctx.Done():
 		return 0, b.Ctx.Err()
 	default:
+		if b.Conn != nil {
+			if deadline, ok := b.Ctx.Deadline(); ok {
+				b.Conn.SetReadDeadline(deadline)
+			}
+		}
 		return b.ReadCloser.Read(p)
 	}
 }
