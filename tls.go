@@ -36,6 +36,7 @@ import (
 	starlark_time "go.starlark.net/lib/time"
 	"go.starlark.net/starlark"
 	"golang.org/x/crypto/cryptobyte"
+	"golang.org/x/net/http2"
 )
 
 // Intercept TLS (HTTPS) connections.
@@ -400,12 +401,10 @@ func SSLBump(conn net.Conn, serverAddr, user, authUser string, r *http.Request) 
 
 		if http2Support {
 			serverConnConfig.NextProtos = []string{"h2"}
-			protocolHTTP2 := new(http.Protocols)
-			protocolHTTP2.SetHTTP2(true)
 
 			var once sync.Once
-			rt = &http.Transport{
-				DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			rt = &http2.Transport{
+				DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
 					var c net.Conn
 					once.Do(func() {
 						c = serverConn
@@ -416,15 +415,12 @@ func SSLBump(conn net.Conn, serverAddr, user, authUser string, r *http.Request) 
 					logVerbose("redial", "Redialing HTTP/2 connection to %s (%s)", session.SNI, session.ServerAddr)
 					return d.DialContext(ctx, "tcp", session.ServerAddr)
 				},
-				TLSClientConfig:        serverConnConfig,
-				Protocols:              protocolHTTP2,
-				MaxResponseHeaderBytes: 262144,
-				HTTP2: &http.HTTP2Config{
-					StrictMaxConcurrentRequests: true,
-					SendPingTimeout:             58 * time.Second,
-					MaxDecoderHeaderTableSize:   65536,
-					MaxReadFrameSize:            16384,
-				},
+				TLSClientConfig:            serverConnConfig,
+				StrictMaxConcurrentStreams: true,
+				ReadIdleTimeout:            58 * time.Second,
+				MaxDecoderHeaderTableSize:  65536,
+				MaxHeaderListSize:          262144,
+				MaxReadFrameSize:           16384,
 			}
 			rt = &RetryTransport{transport: rt}
 		} else {
@@ -476,10 +472,9 @@ func SSLBump(conn net.Conn, serverAddr, user, authUser string, r *http.Request) 
 
 	logTLS(user, session.ServerAddr, serverName, nil, false, ja4Fingerprint)
 
-	downstreamProtocols := new(http.Protocols)
-	downstreamProtocols.SetHTTP1(true)
-	downstreamProtocols.SetHTTP2(http2Downstream)
-	server.Protocols = downstreamProtocols
+	if http2Downstream {
+		http2.ConfigureServer(server, nil)
+	}
 	listener := &singleListener{conn: tlsConn}
 	server.Serve(listener)
 
